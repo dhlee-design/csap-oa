@@ -1,36 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CSAP 정기점검 관리 시스템
 
-## Getting Started
+CSAP 사후평가 대비 정기점검(비정상 통신경로, 백업, 접근권한)을 주기에 맞춰 수행하고, 결과·증적·승인을 한곳에 남기는 사내 웹 시스템입니다. 기획 내용은 [docs/기획서.md](docs/기획서.md)를 보세요.
 
-First, run the development server:
+## 실행 (로컬 PC)
+
+필요: Node.js 22 이상
 
 ```bash
+npm install
+npm run db:push
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+브라우저에서 http://localhost:3100 을 엽니다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. 처음 열면 **최초 관리자 등록** 화면이 나옵니다. 관리자 계정을 만들고 인증 앱(Google/Microsoft Authenticator)으로 2단계 인증을 등록합니다.
+2. **관리 > 사용자**에서 점검자·승인자 계정을 추가합니다.
+3. **관리 > 점검 템플릿·담당자**에서 점검별 점검자와 승인자를 지정합니다. 두 사람은 달라야 합니다.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+상시 운영할 때는 `npm run build` 후 `npm start`로 실행하세요.
 
-## Learn More
+## 데이터 위치 (백업 대상)
 
-To learn more about Next.js, take a look at the following resources:
+| 경로 | 내용 |
+|---|---|
+| `data/csap.db` | 점검 결과, 사용자, 승인 이력, 감사 로그 (SQLite) |
+| `data/evidence/` | 증적 파일 (`기간/회차ID/증적번호_제목_기간_시각_해시.확장자`) |
+| `data/forms/asset-register.xlsx` | 자산관리대장 양식 파일 (다운로드 때 이 파일에 현재 값을 채움) |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+세 경로는 git에 올라가지 않습니다. 정기적으로 따로 백업하세요.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 자산관리대장 (STEG_CSAP_041)
 
-## Deploy on Vercel
+**관리 > 자산관리대장**에서 관리합니다 (관리자 전용).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. 자산관리대장 xlsx를 올리면 '번호' 머리글이 있는 시트마다 열 구성과 자산 행을 읽어 등록합니다. 올린 파일은 양식으로 보관됩니다.
+2. 화면에서 시트별로 행을 추가·수정·삭제하고 순서를 바꿉니다. 변경 전후 값은 감사 로그에 남습니다.
+3. **양식 그대로 다운로드**를 누르면 보관한 양식 파일에 현재 값을 채워 내려줍니다. 표지·제목·머리글·병합·열 너비·서식은 그대로이고, 데이터 행만 바뀝니다. 번호는 1부터 다시 매기고, 늘어난 행은 마지막 데이터 행 서식을 따릅니다.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+양식 자체(시트·열 구성)가 바뀌면 새 양식 파일을 다시 올리세요. 이때 기존 자산 데이터는 새 파일 내용으로 바뀝니다.
+
+### 대상 자산과의 연결
+
+- **대상 자산**(접근권한 점검 대상)은 자산관리대장의 행 하나와 연결됩니다. 이름이 대장 행의 호스트명(없으면 자산명)과 같으면 자동으로 연결하고, 같은 이름이 여러 시트에 있으면 앞 시트(OS 등)의 행을 씁니다.
+- 대장 화면의 **점검 대상** 열에서 행을 바로 점검 대상으로 지정할 수 있습니다. 대상 자산 화면에서는 대장 행을 직접 고르거나 연결을 끊을 수 있습니다.
+- 대장에서 호스트명을 바꾸면 연결된 대상 자산 이름도 따라 바뀌어 다음 회차부터 반영됩니다. 대장에서 행을 지우면 점검 대상은 남고 연결만 끊기며, 대상 자산 화면에 '대장에 없음'으로 표시됩니다.
+- 양식 파일을 다시 올리면 대상 자산을 이름으로 다시 연결합니다.
+
+## 동작 규칙
+
+- **회차 자동 생성**: 서버를 켤 때와 켜져 있는 동안 1시간마다, 시작 기간부터 현재 기간까지 빠진 회차를 만듭니다. PC가 꺼져 있던 기간도 다음 실행 때 채워집니다. 마감은 기간의 말일입니다.
+- **제출 검증**: 모든 항목 입력, 필수 증적 첨부, 점검일 입력이 끝나야 승인을 요청할 수 있습니다. 이상 항목이 있으면 종합 결과를 '이상 발견'으로 하고 이상 내용·조치를 적어야 합니다.
+- **직무 분리**: 회차를 입력·제출하거나 증적을 올린 사람은 그 회차를 승인할 수 없습니다. 제출한 사람이 점검자로 기록됩니다.
+- **잠금과 정정**: 승인되면 잠겨서 수정할 수 없습니다. 고칠 내용이 있으면 정정본을 만들고, 원본은 그대로 남습니다.
+- **증적 무결성**: 업로드할 때 SHA-256 해시, 올린 사람, 시각을 기록합니다. 승인 전에 삭제해도 파일은 지우지 않고 기록에만 삭제 표시를 합니다.
+- **계정 보안**: 비밀번호는 9자 이상에 영문·숫자·특수문자를 포함해야 합니다. 비밀번호나 인증 코드를 5회 틀리면 계정이 잠기고, 관리자가 해제합니다. 세션은 8시간 동안 유지됩니다.
+- **감사 로그**: 로그인, 입력 저장, 제출·승인·반려, 증적 업로드·다운로드를 모두 기록합니다.
+
+## 점검 추가 방법
+
+`src/lib/templates/`에 템플릿 정의 파일을 추가하고 `index.ts`의 `BUILTIN_TEMPLATES`에 등록합니다. 섹션 형식은 `types.ts`에 있습니다.
+
+- `checklist`: 항목별 결과 (예: Y/N)
+- `matrix`: 대상 × 기준 (대상은 태그가 붙은 자산)
+- `table`: 행 입력, 계산 열 포함
+- `summary`: 종합 결과와 조치
+
+서버를 다시 시작하면 등록되고, 다음 회차부터 생성됩니다.
+
+## 구성
+
+Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · Prisma 6 + SQLite · otplib(TOTP) · bcryptjs

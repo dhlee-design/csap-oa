@@ -1,0 +1,188 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  loginId         String    @unique
+  name            String
+  email           String?
+  role            String    @default("USER") // ADMIN | USER
+  passwordHash    String
+  totpSecret      String?
+  totpEnabled     Boolean   @default(false)
+  failedLogins    Int       @default(0)
+  lockedAt        DateTime?
+  active          Boolean   @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sessions        Session[]
+  inspectorOf     InspectionTemplate[] @relation("TemplateInspector")
+  approverOf      InspectionTemplate[] @relation("TemplateApprover")
+  inspectedRuns   InspectionRun[]      @relation("RunInspector")
+  approvedRuns    InspectionRun[]      @relation("RunApprover")
+  evidences       Evidence[]
+  approvals       Approval[]
+}
+
+model Session {
+  id          String   @id // SHA-256(token)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totpPassed  Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  ip          String?
+  userAgent   String?
+}
+
+model InspectionTemplate {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  basis        String // 근거 조항
+  frequency    String // MONTHLY | QUARTERLY | HALF | YEARLY
+  version      Int      @default(1)
+  schema       String // 섹션/필드 정의 JSON (TemplateSchema)
+  active       Boolean  @default(true)
+  startPeriod  String // 회차 생성 시작 기간 (예: 2026-11)
+  inspectorId  String?
+  inspector    User?    @relation("TemplateInspector", fields: [inspectorId], references: [id])
+  approverId   String?
+  approver     User?    @relation("TemplateApprover", fields: [approverId], references: [id])
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  runs         InspectionRun[]
+}
+
+model InspectionRun {
+  id              String    @id @default(cuid())
+  templateId      String
+  template        InspectionTemplate @relation(fields: [templateId], references: [id])
+  templateVersion Int
+  schema          String // 회차 생성 시점의 템플릿 스냅샷 JSON
+  period          String // 2026-11 | 2026-Q4 | 2026-H2 | 2026
+  dueDate         DateTime
+  status          String    @default("PLANNED") // PLANNED | IN_PROGRESS | SUBMITTED | APPROVED | REJECTED
+  data            String    @default("{}") // 입력 결과 JSON
+  inspectedAt     DateTime? // 점검일
+  inspectorId     String?
+  inspector       User?     @relation("RunInspector", fields: [inspectorId], references: [id])
+  approverId      String?
+  approver        User?     @relation("RunApprover", fields: [approverId], references: [id])
+  submittedAt     DateTime?
+  approvedAt      DateTime?
+  lockedAt        DateTime?
+  revision        Int       @default(0) // 0 = 원본, 1.. = 정정본
+  supersedesId    String?   @unique
+  supersedes      InspectionRun?  @relation("Correction", fields: [supersedesId], references: [id])
+  supersededBy    InspectionRun?  @relation("Correction")
+  migrated        Boolean   @default(false) // 기존 문서에서 이관한 회차
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  evidences       Evidence[]
+  approvals       Approval[]
+
+  @@index([templateId, period])
+}
+
+model Evidence {
+  id            String   @id @default(cuid())
+  runId         String
+  run           InspectionRun @relation(fields: [runId], references: [id])
+  slotKey       String // 템플릿 증적 슬롯 키 (예: E-01)
+  originalName  String
+  storedName    String
+  storagePath   String // storage 폴더 기준 상대 경로
+  mimeType      String
+  size          Int
+  sha256        String
+  uploaderId    String
+  uploader      User     @relation(fields: [uploaderId], references: [id])
+  deletedAt     DateTime? // 승인 전 삭제 (파일은 보존)
+  createdAt     DateTime @default(now())
+}
+
+model Approval {
+  id         String   @id @default(cuid())
+  runId      String
+  run        InspectionRun @relation(fields: [runId], references: [id])
+  decision   String // SUBMIT | APPROVE | REJECT
+  comment    String?
+  actorId    String
+  actor      User     @relation(fields: [actorId], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+model Asset {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  kind      String // VPN | SERVER | DB | CACHE | ETC
+  tags      String   @default("") // 쉼표 구분 (예: access-review)
+  owner     String?
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  // 자산관리대장의 행과 연결 (대장에서 행이 지워지면 연결만 끊긴다)
+  recordId  String?      @unique
+  record    AssetRecord? @relation(fields: [recordId], references: [id], onDelete: SetNull)
+}
+
+// ── 자산관리대장 (STEG_CSAP_041) ──
+// 양식 xlsx의 시트 하나 = AssetSheet 하나. 열 정의는 양식 파일에서 읽어 온다.
+model AssetSheet {
+  id          String   @id @default(cuid())
+  name        String   @unique // 양식 파일의 시트 이름 (내보낼 때 이 이름으로 찾는다)
+  title       String // 시트 제목 (예: 서버 시스템 목록)
+  category    String   @default("") // 자산분류
+  description String   @default("")
+  headerRow   Int // '번호'가 있는 행
+  numberCol   String // '번호' 열 (예: A)
+  columns     String // [{ col, label, group, type }] JSON
+  sortOrder   Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  records     AssetRecord[]
+}
+
+model AssetRecord {
+  id        String     @id @default(cuid())
+  sheetId   String
+  sheet     AssetSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  values    String // { "B": "new-steg-web01", ... } JSON
+  sortOrder Int        @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  target    Asset? // 점검 대상 자산 (접근권한 점검 등)
+
+  @@index([sheetId, sortOrder])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorName  String?
+  action     String
+  targetType String?
+  targetId   String?
+  detail     String? // JSON
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+}
+
+model Setting {
+  key   String @id
+  value String
+}
