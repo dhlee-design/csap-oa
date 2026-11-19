@@ -67,7 +67,10 @@ function roleOf(text: string): "master" | "standby" | "slave" | "" {
 
 const first = (s?: string) => (s ?? "").split("\n")[0].trim();
 
-/** 버전 비교: 점으로 나눈 각 자리를 숫자로 비교 (숫자가 아니면 글자 그대로) */
+/**
+ * 버전 비교: 점으로 나눈 각 자리를 숫자로 비교 (숫자가 아니면 글자 그대로).
+ * 한쪽이 주 버전만 있으면(예: 클라우드 "22", 대장 "22.04") 있는 자리까지만 비교한다.
+ */
 export function sameVersion(a: string, b: string): boolean {
   const parts = (v: string) =>
     v
@@ -75,7 +78,10 @@ export function sameVersion(a: string, b: string): boolean {
       .replace(/^v/i, "")
       .split(".")
       .map((p) => (/^\d+$/.test(p) ? String(Number(p)) : p.toLowerCase()));
-  return parts(a).join(".") === parts(b).join(".");
+  const pa = parts(a);
+  const pb = parts(b);
+  const n = Math.min(pa.length, pb.length);
+  return pa.slice(0, n).join(".") === pb.slice(0, n).join(".");
 }
 const empty = (s: string) => !s || s === "-";
 

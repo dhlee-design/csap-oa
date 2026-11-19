@@ -1,5 +1,5 @@
 import "server-only";
-import { listAll, ncloudConfig, type NcloudConfig } from "./client";
+import { getList, listAll, ncloudConfig, type NcloudConfig } from "./client";
 import type { CloudAsset } from "./types";
 
 type Code = { code?: string; codeName?: string };
@@ -30,15 +30,28 @@ type DbServer = {
 
 const ymd = (s?: string) => (s && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : "");
 
-/** 이미지 코드에서 OS 버전 짐작. 예) SW.VSVR.OS.LNX64.UBNTU.SVR2204.B050 → 22.04, ...ROCKY.0810... → 8.10 */
+/**
+ * 이미지 코드에서 OS 버전 짐작.
+ * 예) ...UBNTU.SVR2204.B050 → 22.04, ...ROCKY.0810... → 8.10
+ *     ...UBNTU.SVR22.G003 → 22, ...ROCKY.09.G003 → 9 (주 버전만 있는 코드)
+ */
 export function osVersionFromImage(code?: string): string {
   if (!code) return "";
-  const m = /(?:SVR|ROCKY|RL|CNTOS|RHEL)\D*?(\d{2})(\d{2})\b/i.exec(code) ?? /\.(\d{1,2})(\d{2})\./.exec(code);
-  if (!m) return "";
-  const major = String(Number(m[1]));
-  // Ubuntu는 연.월 표기(22.04)라 0을 유지하고, 나머지(Rocky 9.6 등)는 앞의 0을 뗀다
-  const minor = /UBNTU|UBUNTU/i.test(code) ? m[2] : String(Number(m[2]));
-  return `${major}.${minor}`;
+  // 점으로 나눈 조각에서 OS 이름 조각(UBNTU, ROCKY 등) 바로 다음 조각이 버전이다.
+  // (앞쪽 "VSVR", "LNX64" 같은 조각은 버전이 아니므로 보지 않는다)
+  const segs = code.toUpperCase().split(".");
+  const i = segs.findIndex((s) => /^(UBNTU|UBUNTU|ROCKY|CNTOS|CENTOS|RHEL|RL|ORCL|DEBIAN|WND|WIN)$/.test(s));
+  if (i < 0 || i + 1 >= segs.length) return "";
+  const digits = segs[i + 1].replace(/\D/g, "");
+  if (!digits) return "";
+  const ubuntu = /UBNTU|UBUNTU/.test(segs[i]);
+  if (digits.length === 4) {
+    // Ubuntu는 연.월 표기(22.04)라 0을 유지하고, 나머지(Rocky 8.10 등)는 앞의 0을 뗀다
+    const minor = ubuntu ? digits.slice(2) : String(Number(digits.slice(2)));
+    return `${Number(digits.slice(0, 2))}.${minor}`;
+  }
+  if (digits.length <= 2) return String(Number(digits)); // 주 버전만 있는 코드 (예: SVR22, 09)
+  return "";
 }
 
 /** 서버(일반 VM·쿠버네티스 워커 노드 포함) + 기본 네트워크 인터페이스의 사설 IP */
@@ -87,7 +100,17 @@ async function mysql(c: NcloudConfig): Promise<CloudAsset[]> {
       cloudMysqlServerInstanceStatusName?: string;
     })[];
   };
-  const list = await listAll<Inst>(c, "/vmysql/v2", "getCloudMysqlInstanceList", "cloudMysqlInstanceList");
+  // 목록 API는 요약만 준다(도메인·버전·생성일 없음) → 인스턴스마다 상세 조회
+  const summary = await listAll<Inst & { cloudMysqlInstanceNo: string }>(
+    c, "/vmysql/v2", "getCloudMysqlInstanceList", "cloudMysqlInstanceList", {}, 0,
+  );
+  const list: Inst[] = [];
+  for (const s of summary) {
+    const d = await getList<Inst>(c, "/vmysql/v2", "getCloudMysqlInstanceDetail", "cloudMysqlInstanceList", {
+      cloudMysqlInstanceNo: String(s.cloudMysqlInstanceNo),
+    });
+    list.push(d[0] ?? s);
+  }
   return list.flatMap((i) =>
     (i.cloudMysqlServerInstanceList ?? []).map((s) => ({
       kind: "mysql" as const,
@@ -103,7 +126,8 @@ async function mysql(c: NcloudConfig): Promise<CloudAsset[]> {
       osVersion: i.engineVersion?.replace(/^MYSQL/i, "").trim() ?? "",
       image: "",
       status: s.cloudMysqlServerInstanceStatusName ?? "",
-      createDate: ymd(s.createDate ?? i.createDate),
+      // 도입일과 맞추려고 DB 서비스(인스턴스) 생성일을 쓴다. 서버는 장애 조치·재생성으로 날짜가 바뀔 수 있다
+      createDate: ymd(i.createDate ?? s.createDate),
       zone: s.zoneCode ?? "",
       description: "",
     })),
@@ -124,7 +148,16 @@ async function redis(c: NcloudConfig): Promise<CloudAsset[]> {
       createDate?: string;
     }[];
   };
-  const list = await listAll<Inst>(c, "/vredis/v2", "getCloudRedisInstanceList", "cloudRedisInstanceList");
+  const summary = await listAll<Inst & { cloudRedisInstanceNo: string }>(
+    c, "/vredis/v2", "getCloudRedisInstanceList", "cloudRedisInstanceList", {}, 0,
+  );
+  const list: Inst[] = [];
+  for (const s of summary) {
+    const d = await getList<Inst>(c, "/vredis/v2", "getCloudRedisInstanceDetail", "cloudRedisInstanceList", {
+      cloudRedisInstanceNo: String(s.cloudRedisInstanceNo),
+    });
+    list.push(d[0] ?? s);
+  }
   return list.flatMap((i) =>
     (i.cloudRedisServerInstanceList ?? []).map((s) => ({
       kind: "redis" as const,
@@ -140,7 +173,8 @@ async function redis(c: NcloudConfig): Promise<CloudAsset[]> {
       osVersion: i.engineVersion?.replace(/^REDIS/i, "").trim() ?? "",
       image: "",
       status: s.cloudRedisServerInstanceStatusName ?? "",
-      createDate: ymd(s.createDate ?? i.createDate),
+      // 도입일과 맞추려고 DB 서비스(인스턴스) 생성일을 쓴다. 서버는 장애 조치·재생성으로 날짜가 바뀔 수 있다
+      createDate: ymd(i.createDate ?? s.createDate),
       zone: s.zoneCode ?? "",
       description: "",
     })),

@@ -47,7 +47,7 @@ type Json = Record<string, unknown>;
 async function call(c: NcloudConfig, basePath: string, action: string, params: Record<string, string>): Promise<Json> {
   if (c.mockDir) {
     const page = params.pageNo ?? "1";
-    const file = path.join(/*turbopackIgnore: true*/ c.mockDir, `${action}${page === "1" ? "" : `.${page}`}.json`);
+    const file = path.join(/*turbopackIgnore: true*/ c.mockDir, `${action}${page === "0" || page === "1" ? "" : `.${page}`}.json`);
     try {
       return JSON.parse(await readFile(file, "utf8")) as Json;
     } catch {
@@ -93,17 +93,36 @@ async function call(c: NcloudConfig, basePath: string, action: string, params: R
   return body;
 }
 
-/** 목록 API를 페이지 단위로 끝까지 읽는다 */
+/** 페이지 없이 한 번 부르는 조회 API (상세 조회 등). 응답의 목록 필드를 돌려준다 */
+export async function getList<T>(
+  c: NcloudConfig,
+  basePath: string,
+  action: string,
+  listField: string,
+  params: Record<string, string>,
+): Promise<T[]> {
+  const body = await call(c, basePath, action, params);
+  const wrap = (body[`${action}Response`] ?? body) as Json;
+  if (wrap.returnCode !== undefined && String(wrap.returnCode) !== "0")
+    throw new NcloudError(`${action}: ${String(wrap.returnMessage ?? "실패")} (코드 ${String(wrap.returnCode)})`);
+  return (wrap[listField] ?? []) as T[];
+}
+
+/**
+ * 목록 API를 페이지 단위로 끝까지 읽는다.
+ * 첫 페이지 번호가 API마다 다르다: vserver는 0·1 모두 첫 페이지, Cloud DB(vmysql·vredis)는 0이 첫 페이지이고 1은 두 번째 페이지.
+ */
 export async function listAll<T>(
   c: NcloudConfig,
   basePath: string,
   action: string,
   listField: string,
   params: Record<string, string> = {},
+  firstPage: 0 | 1 = 1,
 ): Promise<T[]> {
   const out: T[] = [];
   const pageSize = 100;
-  for (let pageNo = 1; pageNo <= 100; pageNo++) {
+  for (let pageNo = firstPage; pageNo < firstPage + 100; pageNo++) {
     const body = await call(c, basePath, action, { ...params, pageNo: String(pageNo), pageSize: String(pageSize) });
     const wrap = (body[`${action}Response`] ?? body) as Json;
     if (wrap.returnCode !== undefined && String(wrap.returnCode) !== "0")
