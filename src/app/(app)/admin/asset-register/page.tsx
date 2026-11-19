@@ -34,9 +34,14 @@ export default async function AssetRegisterPage({ searchParams }: { searchParams
           </p>
         </div>
         {meta && sheets.length > 0 && (
-          <a href="/api/asset-register" className="btn btn-primary">
-            양식 그대로 다운로드 (.xlsx)
-          </a>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/admin/asset-register/cloud" className="btn">
+              네이버클라우드와 비교
+            </Link>
+            <a href="/api/asset-register" className="btn btn-primary">
+              양식 그대로 다운로드 (.xlsx)
+            </a>
+          </div>
         )}
       </div>
 
