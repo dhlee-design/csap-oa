@@ -4,15 +4,18 @@ CSAP 사후평가 대비 정기점검(비정상 통신경로, 백업, 접근권�
 
 ## 실행 (로컬 PC)
 
-필요: Node.js 22 이상
+필요: Node.js 22 이상 (https://nodejs.org 에서 LTS 설치)
 
 ```bash
 npm install
-npm run db:push
+npm run setup
 npm run dev
 ```
 
-브라우저에서 http://localhost:3100 을 엽니다.
+- `npm run setup`은 설정 파일(`.env`)이 없으면 `.env.example`로 만들고, `data/csap.db`에 빈 DB를 만듭니다. 처음 한 번만 실행하면 됩니다.
+- 코드를 새로 받은 뒤(`git pull`)에도 `npm install`과 `npm run setup`을 한 번 실행하세요. DB에 새 테이블이 생겨도 기존 데이터는 유지됩니다.
+
+브라우저에서 http://localhost:3100 을 엽니다. 같은 네트워크의 다른 PC에서는 `http://<이 PC의 IP>:3100` 으로 접속합니다 (Windows 방화벽에서 3100 포트를 허용해야 할 수 있습니다).
 
 1. 처음 열면 **최초 관리자 등록** 화면이 나옵니다. 관리자 계정을 만들고 인증 앱(Google/Microsoft Authenticator)으로 2단계 인증을 등록합니다.
 2. **관리 > 사용자**에서 점검자·승인자 계정을 추가합니다.
